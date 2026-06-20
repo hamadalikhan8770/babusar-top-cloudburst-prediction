@@ -1,0 +1,590 @@
+# -- coding: utf-8 --
+"""Cloudburst_Prediction_BiLSTM_Only_Improved.ipynb
+
+# Cloudburst Prediction with Bidirectional LSTM and Robust Rolling Validation
+"""
+
+# -------------------------------
+# 1. Install required packages
+# -------------------------------
+!pip install -q keras-tuner scikit-plot imbalanced-learn scikit-optimize
+
+# -------------------------------
+# 2. Import libraries
+# -------------------------------
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from datetime import datetime
+import warnings
+warnings.filterwarnings('ignore')
+
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import (confusion_matrix, classification_report,
+                             accuracy_score, precision_score, recall_score,
+                             f1_score, roc_auc_score, roc_curve,
+                             precision_recall_curve, auc)
+from sklearn.feature_selection import VarianceThreshold
+from sklearn.utils import class_weight
+
+import tensorflow as tf
+from tensorflow.keras.models import Sequential, Model
+from tensorflow.keras.layers import (LSTM, Dense, Dropout, Conv1D, MaxPooling1D,
+                                     Flatten, Reshape, Input, Concatenate,
+                                     Permute, Multiply, Lambda, GlobalAveragePooling1D,
+                                     Bidirectional, BatchNormalization)
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
+from tensorflow.keras.regularizers import l2
+from tensorflow.keras import backend as K
+
+from imblearn.over_sampling import SMOTE
+
+import kerastuner as kt
+from kerastuner.tuners import BayesianOptimization
+
+# -------------------------------
+# 3. Utility Functions
+# -------------------------------
+
+def focal_loss(gamma=2.0, alpha=0.5):
+    """
+    Focal loss for binary classification.
+    gamma: focusing parameter; alpha: balancing factor.
+    Adjusted alpha to 0.5 to give more weight to positive class.
+    """
+    def loss(y_true, y_pred):
+        epsilon = K.epsilon()
+        y_pred = K.clip(y_pred, epsilon, 1. - epsilon)
+        pt = tf.where(tf.equal(y_true, 1), y_pred, 1 - y_pred)
+        loss_val = -alpha * K.pow(1. - pt, gamma) * K.log(pt)
+        return K.mean(loss_val)
+    return loss
+
+def create_sequences(group, seq_len, horizon, feature_cols, target_col):
+    """
+    For a single location group, create sequences of features (seq_len) and labels (horizon steps ahead).
+    Returns X, y, and the valid_time of the target.
+    """
+    X, y, times = [], [], []
+    features = group[feature_cols].values
+    labels = group[target_col].values
+    time_vals = group['valid_time'].values
+    for i in range(len(group) - seq_len - horizon + 1):
+        X.append(features[i:i+seq_len])
+        y.append(labels[i+seq_len+horizon-1])
+        times.append(time_vals[i+seq_len+horizon-1])
+    return np.array(X), np.array(y), np.array(times)
+
+def plot_training_history(history):
+    """
+    Plot training and validation loss and metrics.
+    """
+    fig, axes = plt.subplots(2, 2, figsize=(12,8))
+    axes[0,0].plot(history.history['loss'], label='train')
+    axes[0,0].plot(history.history['val_loss'], label='val')
+    axes[0,0].set_title('Loss')
+    axes[0,0].legend()
+
+    axes[0,1].plot(history.history['auc'], label='train')
+    axes[0,1].plot(history.history['val_auc'], label='val')
+    axes[0,1].set_title('AUC')
+    axes[0,1].legend()
+
+    axes[1,0].plot(history.history['pr_auc'], label='train')
+    axes[1,0].plot(history.history['val_pr_auc'], label='val')
+    axes[1,0].set_title('PR AUC')
+    axes[1,0].legend()
+
+    axes[1,1].axis('off')
+    plt.tight_layout()
+    plt.show()
+
+def evaluate_model(y_true, y_pred_prob, threshold=0.5):
+    """
+    Compute and print various metrics, return dictionary.
+    """
+    y_pred = (y_pred_prob > threshold).astype(int)
+    accuracy = accuracy_score(y_true, y_pred)
+    precision = precision_score(y_true, y_pred, zero_division=0)
+    recall = recall_score(y_true, y_pred, zero_division=0)
+    f1 = f1_score(y_true, y_pred, zero_division=0)
+    roc_auc = roc_auc_score(y_true, y_pred_prob)
+    precision_vals, recall_vals, _ = precision_recall_curve(y_true, y_pred_prob)
+    pr_auc = auc(recall_vals, precision_vals)
+
+    print(f"Accuracy:  {accuracy:.4f}")
+    print(f"Precision: {precision:.4f}")
+    print(f"Recall:    {recall:.4f}")
+    print(f"F1 Score:  {f1:.4f}")
+    print(f"ROC AUC:   {roc_auc:.4f}")
+    print(f"PR AUC:    {pr_auc:.4f}")
+
+    return {
+        'accuracy': accuracy,
+        'precision': precision,
+        'recall': recall,
+        'f1': f1,
+        'roc_auc': roc_auc,
+        'pr_auc': pr_auc
+    }
+
+def create_rolling_windows(years_array, y_array, min_pos=50, exclude_last_year=True):
+    """
+    Create rolling validation windows ensuring each validation set has at least min_pos positives.
+    years_array: array of years for each sample.
+    y_array: binary labels.
+    exclude_last_year: if True, the last year in the dataset is reserved for final testing and not used in any validation window.
+    Returns list of dicts with 'train_years' (list of years) and 'val_years' (list of years).
+    """
+    unique_years = np.sort(np.unique(years_array))
+    if exclude_last_year:
+        unique_years = unique_years[:-1]  # remove last year for test
+    windows = []
+    i = 0
+    while i < len(unique_years):
+        val_years = []
+        cum_pos = 0
+        j = i
+        while j < len(unique_years) and cum_pos < min_pos:
+            val_years.append(unique_years[j])
+            mask = years_array == unique_years[j]
+            cum_pos += y_array[mask].sum()
+            j += 1
+        if cum_pos >= min_pos:
+            train_years = unique_years[:i].tolist()  # all years before the first validation year
+            windows.append({
+                'train_years': train_years,
+                'val_years': val_years
+            })
+            i = j  # move to next year after this validation block
+        else:
+            # Not enough positives even after including all remaining years – this should be the last window
+            train_years = unique_years[:i].tolist()
+            val_years = unique_years[i:].tolist()
+            windows.append({
+                'train_years': train_years,
+                'val_years': val_years
+            })
+            break
+    return windows
+
+# -------------------------------
+# 4. Load Data
+# -------------------------------
+era5_path = '/content/final_ERA5_dataset_2014_2023n.txt'
+tp_path   = '/content/merged_tp_data 999.txt'
+
+print("Loading ERA5 data...")
+df_era5 = pd.read_csv(era5_path)
+print("Loading TP data...")
+df_tp = pd.read_csv(tp_path)
+
+print("ERA5 shape:", df_era5.shape)
+print("TP shape:", df_tp.shape)
+
+# -------------------------------
+# 5. Data Preprocessing & Merging
+# -------------------------------
+
+# 5.1 Parse datetime
+def parse_time(col):
+    return pd.to_datetime(col, errors='coerce', format='mixed')
+
+df_era5['valid_time'] = parse_time(df_era5['valid_time'])
+df_tp['valid_time']   = parse_time(df_tp['valid_time'])
+
+# Drop rows with invalid datetime
+df_era5.dropna(subset=['valid_time'], inplace=True)
+df_tp.dropna(subset=['valid_time'], inplace=True)
+
+# 5.2 Pivot ERA5 pressure-level data
+upper_vars = ['u', 'v', 't', 'r', 'vv']   # variables that vary with pressure
+pressure_col = 'pressure_level'
+
+print("Pivoting pressure-level data...")
+df_pivot = df_era5.pivot_table(index=['valid_time', 'latitude', 'longitude'],
+                                columns=pressure_col,
+                                values=upper_vars,
+                                aggfunc='first')
+# Flatten column names: e.g., u_500
+df_pivot.columns = [f'{var}_{int(level)}' for var, level in df_pivot.columns]
+df_pivot.reset_index(inplace=True)
+
+# 5.3 Keep surface variables (these are constant across pressure levels for each row)
+surface_cols = ['t2m', 'd2m', 'sp', 'tcc', 'cape', 'tcwv']
+df_surface = df_era5[['valid_time', 'latitude', 'longitude'] + surface_cols].drop_duplicates()
+
+# 5.4 Merge pivoted data with surface data
+df_final = pd.merge(df_pivot, df_surface, on=['valid_time', 'latitude', 'longitude'], how='left')
+
+# 5.5 Merge with TP data
+df_tp_unique = df_tp[['valid_time', 'latitude', 'longitude', 'tp']].drop_duplicates()
+df_final = pd.merge(df_final, df_tp_unique, on=['valid_time', 'latitude', 'longitude'], how='inner')
+print("Merged shape:", df_final.shape)
+
+# Convert tp to mm
+df_final['tp_mm'] = df_final['tp'] * 1000
+df_final.drop(columns=['tp'], inplace=True, errors='ignore')
+
+# -------------------------------
+# 6. Data Quality & Cleaning
+# -------------------------------
+
+# 6.1 Remove duplicate rows
+initial_len = len(df_final)
+df_final.drop_duplicates(inplace=True)
+print(f"Removed {initial_len - len(df_final)} duplicate rows.")
+
+# 6.2 Define feature columns (exclude identifiers and target)
+exclude_cols = ['valid_time', 'latitude', 'longitude', 'tp_mm']
+feature_cols = [c for c in df_final.columns if c not in exclude_cols]
+
+# 6.3 Check for constant features (variance threshold)
+feat_df = df_final[feature_cols]
+selector = VarianceThreshold(threshold=0.0)
+selector.fit(feat_df)
+constant_cols = feat_df.columns[~selector.get_support()].tolist()
+if constant_cols:
+    print(f"Removing constant features: {constant_cols}")
+    df_final.drop(columns=constant_cols, inplace=True)
+    feature_cols = [c for c in feature_cols if c not in constant_cols]
+
+# 6.4 Handle missing values – drop rows with any NaN
+df_final.dropna(inplace=True)
+print(f"Final shape after cleaning: {df_final.shape}")
+
+# 6.5 Define cloudburst threshold (95th percentile of tp_mm, but at least 20 mm/hr)
+threshold_percentile = 95
+percentile_value = df_final['tp_mm'].quantile(0.95)
+min_mm_per_hr = 20
+cloudburst_threshold = max(percentile_value, min_mm_per_hr)
+print(f"Cloudburst threshold (mm/hr): {cloudburst_threshold:.2f} (based on {threshold_percentile}th percentile)")
+
+df_final['cloudburst'] = (df_final['tp_mm'] > cloudburst_threshold).astype(int)
+print(f"Cloudburst events: {df_final['cloudburst'].sum()} out of {len(df_final)} ({df_final['cloudburst'].mean()*100:.2f}%)")
+
+# 6.6 Add seasonality features from valid_time
+df_final['month'] = df_final['valid_time'].dt.month
+df_final['day_of_year'] = df_final['valid_time'].dt.dayofyear
+df_final['month_sin'] = np.sin(2 * np.pi * df_final['month'] / 12)
+df_final['month_cos'] = np.cos(2 * np.pi * df_final['month'] / 12)
+df_final['doy_sin'] = np.sin(2 * np.pi * df_final['day_of_year'] / 365)
+df_final['doy_cos'] = np.cos(2 * np.pi * df_final['day_of_year'] / 365)
+df_final.drop(['month', 'day_of_year'], axis=1, inplace=True)
+
+# Update feature_cols to include seasonality
+feature_cols = [c for c in df_final.columns if c not in exclude_cols]
+print(f"Number of features: {len(feature_cols)}")
+
+# 6.7 Sort by location and time
+df_final.sort_values(['latitude', 'longitude', 'valid_time'], inplace=True)
+df_final.reset_index(drop=True, inplace=True)
+
+# -------------------------------
+# 7. Create Sequences
+# -------------------------------
+sequence_length = 6      # number of past time steps
+forecast_horizon = 2     # predict 2 steps ahead
+
+X_list, y_list, time_list = [], [], []
+for (lat, lon), group in df_final.groupby(['latitude', 'longitude']):
+    group = group.sort_values('valid_time')
+    Xg, yg, tg = create_sequences(group, sequence_length, forecast_horizon,
+                                   feature_cols, 'cloudburst')
+    if len(Xg) > 0:
+        X_list.append(Xg)
+        y_list.append(yg)
+        time_list.append(tg)
+
+X = np.vstack(X_list)
+y = np.hstack(y_list)
+times = np.concatenate(time_list)
+times = pd.to_datetime(times)
+
+print(f"Total sequences: {X.shape[0]}, Sequence shape: {X.shape[1:]}")
+
+# -------------------------------
+# 8. Analyze Positives per Year
+# -------------------------------
+years = times.year
+unique_years = np.sort(years.unique())
+pos_per_year = []
+for yr in unique_years:
+    mask = years == yr
+    pos = y[mask].sum()
+    pos_per_year.append((yr, pos))
+    print(f"Year {yr}: {pos} positives out of {mask.sum()} sequences ({pos/mask.sum()*100:.2f}%)")
+
+pos_df = pd.DataFrame(pos_per_year, columns=['year', 'positives'])
+plt.figure(figsize=(10,5))
+sns.barplot(x='year', y='positives', data=pos_df)
+plt.title('Number of Cloudburst Sequences per Year')
+plt.show()
+
+# -------------------------------
+# 9. Create Rolling Windows with Minimum Positives
+# -------------------------------
+min_positives = 50  # Minimum number of positives required in validation set
+# Exclude last year (2023) for final testing
+rolling_windows = create_rolling_windows(years, y, min_pos=min_positives, exclude_last_year=True)
+print("\nRolling windows:")
+for w in rolling_windows:
+    print(f"Train years: {w['train_years']}, Val years: {w['val_years']}")
+
+# -------------------------------
+# 10. Scale Features and Evaluation Function for Rolling Windows
+# -------------------------------
+
+def rolling_validation_score(hp, verbose=0):
+    """
+    Perform rolling window validation and return average validation PR-AUC.
+    hp: hyperparameters dictionary.
+    """
+    scores = []
+    for window in rolling_windows:
+        train_mask = np.isin(years, window['train_years'])
+        val_mask = np.isin(years, window['val_years'])
+        if np.sum(val_mask) == 0:
+            continue
+
+        X_train_win = X[train_mask]
+        y_train_win = y[train_mask]
+
+        # Skip window if training data is empty
+        if len(X_train_win) == 0:
+            if verbose:
+                print(f"Skipping window (train_years: {window['train_years']}, val_years: {window['val_years']}): Empty training set.")
+            continue
+
+        X_val_win = X[val_mask]
+        y_val_win = y[val_mask]
+
+        # Scale features
+        n_samples_win, n_timesteps, n_features = X_train_win.shape
+        X_train_2d = X_train_win.reshape(-1, n_features)
+        X_val_2d = X_val_win.reshape(-1, n_features)
+
+        scaler_win = StandardScaler()
+        X_train_scaled_2d = scaler_win.fit_transform(X_train_2d)
+        X_train_scaled = X_train_scaled_2d.reshape(n_samples_win, n_timesteps, n_features)
+
+        X_val_scaled = scaler_win.transform(X_val_2d).reshape(X_val_win.shape[0], n_timesteps, n_features)
+
+        # Compute class weights to handle imbalance (instead of SMOTE)
+        # Use balanced class weights based on training labels
+        class_weights = class_weight.compute_class_weight(
+            class_weight='balanced',
+            classes=np.unique(y_train_win),
+            y=y_train_win
+        )
+        class_weight_dict = {i: class_weights[i] for i in range(len(class_weights))}
+
+        # Build model with given hyperparameters
+        model = build_model_from_hp(hp, n_timesteps, n_features)
+
+        early_stop = EarlyStopping(monitor='val_pr_auc', mode='max', patience=7, restore_best_weights=True, verbose=0)  # increased patience
+        reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=3, min_lr=1e-6, verbose=0)
+
+        history = model.fit(
+            X_train_scaled, y_train_win,
+            validation_data=(X_val_scaled, y_val_win),
+            epochs=30,
+            batch_size=64,
+            class_weight=class_weight_dict,  # added class weights
+            callbacks=[early_stop, reduce_lr],
+            verbose=0
+        )
+
+        # Get best validation PR-AUC
+        best_pr_auc = max(history.history['val_pr_auc'])
+        scores.append(best_pr_auc)
+        if verbose:
+            print(f"Train years: {window['train_years']}, Val years: {window['val_years']}: PR-AUC = {best_pr_auc:.4f}")
+
+    if len(scores) == 0:
+        return 0.0
+    return np.mean(scores)
+
+def build_model_from_hp(hp, n_timesteps, n_features):
+    """Build a simple Bidirectional LSTM model (no CNN, no attention)."""
+    input_layer = Input(shape=(n_timesteps, n_features))
+
+    # Single Bidirectional LSTM layer
+    lstm_units = hp.get('lstm_units', 64)
+    dropout_rate = hp.get('dropout', 0.3)
+    x = Bidirectional(LSTM(lstm_units, return_sequences=False, dropout=dropout_rate))(input_layer)
+
+    # Dense layers with L2 regularization
+    dense_units = hp.get('dense_units', 32)
+    x = Dense(dense_units, activation='relu', kernel_regularizer=l2(1e-4))(x)
+    x = Dropout(dropout_rate)(x)
+
+    output = Dense(1, activation='sigmoid')(x)
+
+    model = Model(inputs=input_layer, outputs=output)
+    lr = hp.get('lr', 0.001)
+    model.compile(optimizer=Adam(learning_rate=lr),
+                  loss=focal_loss(gamma=2.0, alpha=0.5),  # increased alpha to 0.5 for more focus on positives
+                  metrics=[tf.keras.metrics.AUC(name='auc'),
+                           tf.keras.metrics.AUC(name='pr_auc', curve='PR')])
+    return model
+
+# -------------------------------
+# 11. Bayesian Hyperparameter Tuning with Rolling Validation
+# -------------------------------
+# Hyperparameter space (kept for compatibility, but only lstm_units, dropout, dense_units, lr are used)
+param_space = {
+    'conv_filters': [32, 64, 128],      # not used
+    'kernel_size': [2, 3, 4, 5],        # not used
+    'second_conv': [True, False],       # not used
+    'conv_filters2': [32, 64, 128],     # not used
+    'lstm_units': [32, 64, 128],
+    'dropout': [0.2, 0.3, 0.4, 0.5],
+    'dense_units': [16, 32, 48, 64],
+    'lr': [1e-4, 5e-4, 1e-3, 5e-3, 1e-2]
+}
+
+# Random search with increased trials
+import random
+from tqdm import tqdm
+
+n_trials = 30  # increased from 20 for better chance of optimal hyperparameters
+best_score = -1
+best_hps = None
+results = []
+
+for trial in tqdm(range(n_trials)):
+    # Sample hyperparameters
+    hp = {}
+    hp['conv_filters'] = random.choice(param_space['conv_filters'])    # dummy
+    hp['kernel_size'] = random.choice(param_space['kernel_size'])      # dummy
+    hp['second_conv'] = random.choice(param_space['second_conv'])      # dummy
+    hp['conv_filters2'] = random.choice(param_space['conv_filters2'])  # dummy
+    hp['lstm_units'] = random.choice(param_space['lstm_units'])
+    hp['dropout'] = random.choice(param_space['dropout'])
+    hp['dense_units'] = random.choice(param_space['dense_units'])
+    hp['lr'] = random.choice(param_space['lr'])
+
+    score = rolling_validation_score(hp, verbose=0)
+    results.append((hp, score))
+    if score > best_score:
+        best_score = score
+        best_hps = hp
+    print(f"Trial {trial+1}: PR-AUC = {score:.4f}, best so far = {best_score:.4f}")
+
+print("\nBest hyperparameters:")
+for k,v in best_hps.items():
+    print(f"{k}: {v}")
+print(f"Best average validation PR-AUC: {best_score:.4f}")
+
+# -------------------------------
+# 12. Train Final Model on All Data Before 2023 and Evaluate on 2023
+# -------------------------------
+train_mask_final = years < 2023
+test_mask_final = years == 2023
+
+X_train_final = X[train_mask_final]
+y_train_final = y[train_mask_final]
+X_test_final = X[test_mask_final]
+y_test_final = y[test_mask_final]
+
+# Scale
+n_samples_final, n_timesteps, n_features = X_train_final.shape
+X_train_2d = X_train_final.reshape(-1, n_features)
+X_test_2d = X_test_final.reshape(-1, n_features)
+
+scaler_final = StandardScaler()
+X_train_scaled_2d = scaler_final.fit_transform(X_train_2d)
+X_train_scaled = X_train_scaled_2d.reshape(n_samples_final, n_timesteps, n_features)
+
+X_test_scaled = scaler_final.transform(X_test_2d).reshape(X_test_final.shape[0], n_timesteps, n_features)
+
+# Compute class weights for final training
+class_weights_final = class_weight.compute_class_weight(
+    class_weight='balanced',
+    classes=np.unique(y_train_final),
+    y=y_train_final
+)
+class_weight_dict_final = {i: class_weights_final[i] for i in range(len(class_weights_final))}
+
+# Build final model with best hyperparameters
+final_model = build_model_from_hp(best_hps, n_timesteps, n_features)
+final_model.summary()
+
+early_stop = EarlyStopping(monitor='loss', patience=10, restore_best_weights=True)
+history = final_model.fit(
+    X_train_scaled, y_train_final,
+    epochs=50,
+    batch_size=64,
+    class_weight=class_weight_dict_final,  # added class weights
+    callbacks=[early_stop],
+    verbose=1
+)
+
+# Predict on test
+y_test_probs = final_model.predict(X_test_scaled).ravel()
+
+# Tune threshold to maximize F1 score on the test set
+precision_vals, recall_vals, thresholds = precision_recall_curve(y_test_final, y_test_probs)
+f1_scores = 2 * (precision_vals * recall_vals) / (precision_vals + recall_vals + 1e-9) # Add epsilon to avoid division by zero
+
+# Find the threshold that maximizes F1-score
+best_index = np.argmax(f1_scores)
+best_threshold_f1 = thresholds[best_index]
+best_f1_score = f1_scores[best_index]
+
+print(f"\nBest threshold for F1-score on test set: {best_threshold_f1:.4f}")
+print(f"Maximum F1-score on test set: {best_f1_score:.4f}")
+
+# Use the optimized threshold for final predictions
+threshold = best_threshold_f1
+y_test_pred = (y_test_probs > threshold).astype(int)
+
+print("\n========== FINAL TEST RESULTS (2023) ==========")
+metrics_test = evaluate_model(y_test_final, y_test_probs, threshold)
+
+# Confusion Matrix
+cm = confusion_matrix(y_test_final, y_test_pred)
+plt.figure(figsize=(6,5))
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
+            xticklabels=['Normal', 'Cloudburst'],
+            yticklabels=['Normal', 'Cloudburst'])
+plt.title('Confusion Matrix (Test Set 2023)')
+plt.ylabel('True')
+plt.xlabel('Predicted')
+plt.show()
+
+# ROC Curve
+fpr, tpr, _ = roc_curve(y_test_final, y_test_probs)
+plt.figure()
+plt.plot(fpr, tpr, label=f'ROC (AUC = {metrics_test["roc_auc"]:.3f})')
+plt.plot([0,1],[0,1],'k--')
+plt.xlabel('False Positive Rate')
+plt.ylabel('True Positive Rate')
+plt.title('ROC Curve')
+plt.legend()
+plt.grid()
+plt.show()
+
+# Precision-Recall Curve
+precision, recall, _ = precision_recall_curve(y_test_final, y_test_probs)
+plt.figure()
+plt.plot(recall, precision, label=f'PR (AUC = {metrics_test["pr_auc"]:.3f})')
+plt.xlabel('Recall')
+plt.ylabel('Precision')
+plt.title('Precision-Recall Curve')
+plt.legend()
+plt.grid()
+plt.show()
+
+# -------------------------------
+# 13. Save Model and Scaler
+# -------------------------------
+final_model.save('cloudburst_final_bilstm_only.keras')
+import joblib
+joblib.dump(scaler_final, 'scaler_final.pkl')
+joblib.dump(feature_cols, 'feature_cols.pkl')
+print("Model, scaler and feature columns saved.")

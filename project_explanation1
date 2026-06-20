@@ -1,0 +1,355 @@
+# Real-Time Cloudburst Prediction System for Babusar Top, Kaghan Valley
+## Technical Explanation for Thesis / Supervisor Review
+
+> **Location:** Babusar Top, Kaghan Valley — Coordinates 35.6°N, 73.6°E  
+> **Model:** Bidirectional Long Short-Term Memory (BiLSTM) Neural Network  
+> **Data Period:** 2014–2023 (ERA5 Reanalysis + Total Precipitation)  
+> **Deployment:** Real-time Flask web dashboard with live Open-Meteo API integration
+
+---
+
+## 1. Problem Statement
+
+Cloudbursts — defined as extreme rainfall events exceeding **20 mm/hour** — are among the most dangerous hydrometeorological hazards in mountainous regions. Babusar Top in the Kaghan Valley (KPK, Pakistan) is particularly vulnerable due to its high altitude (~4,173 m), steep terrain, and exposure to monsoon and western disturbance moisture. Cloudbursts at this location cause flash floods, landslides, road blockages, and loss of life.
+
+Traditional Numerical Weather Prediction (NWP) models have limited spatial resolution and do not perform well for localised extreme events in complex mountain terrain. This project addresses that gap by building a **data-driven deep learning model** capable of predicting cloudburst probability up to **2 hours in advance** using atmospheric reanalysis data.
+
+---
+
+## 2. Dataset
+
+### 2.1 ERA5 Atmospheric Reanalysis Data
+The primary dataset is ERA5 reanalysis data obtained from the **European Centre for Medium-Range Weather Forecasts (ECMWF)** via the Copernicus Climate Data Store (CDS). ERA5 is the gold standard global atmospheric reanalysis dataset with:
+- **Spatial resolution:** 0.25° × 0.25° (~28 km)
+- **Temporal resolution:** Hourly
+- **Coverage:** 2014–2023 for the Babusar Top region
+
+**Pressure-level variables** were extracted at three atmospheric levels: **500 hPa** (upper troposphere), **700 hPa** (mid troposphere), and **850 hPa** (lower troposphere).
+
+| Variable | Symbol | Levels | Physical Meaning |
+|---|---|---|---|
+| Relative Humidity | r | 500, 700, 850 hPa | Moisture content at different heights |
+| Temperature | t | 500, 700, 850 hPa | Atmospheric temperature at pressure levels |
+| U-component of Wind | u | 500, 700, 850 hPa | East-West wind speed |
+| V-component of Wind | v | 500, 700, 850 hPa | North-South wind speed |
+| Vertical Velocity | vv | 500, 700, 850 hPa | Upward/downward air motion (key for convection) |
+
+**Surface variables** were also included:
+
+| Variable | Symbol | Physical Meaning |
+|---|---|---|
+| 2m Temperature | t2m | Near-surface air temperature |
+| 2m Dewpoint Temperature | d2m | Moisture near surface |
+| Surface Pressure | sp | Atmospheric pressure at surface |
+| Total Cloud Cover | tcc | Fractional cloud coverage |
+| Convective Available Potential Energy | cape | Energy available for storm formation |
+| Total Column Water Vapour | tcwv | Total precipitable water in the column |
+
+### 2.2 Total Precipitation (TP) Data
+Hourly total precipitation (mm/hr) data was sourced separately and merged with the ERA5 dataset. The `tp` variable (in metres) was converted to **mm/hr** (`tp × 1000`).
+
+### 2.3 Dataset Statistics (After Preprocessing)
+- **ERA5 raw shape:** 701,184 rows × 15 columns
+- **TP raw shape:** 5,465,855 rows × 4 columns
+- **After merging and cleaning:** 61,998 hourly records × 25 features
+- **Final feature count:** 26 (including 4 cyclical time features)
+- **Total sequences created:** 61,984 sequences of shape [(6 timesteps, 26 features)](file:///c:/Users/HYPER%20Computers/Downloads/a4.project.bilstm/app.py#53-59)
+
+---
+
+## 3. Data Preprocessing
+
+### 3.1 Merging ERA5 Pressure-Level Data
+ERA5 pressure-level variables were **pivoted** from long format (one row per variable per pressure level) to wide format using `pandas.pivot_table`, creating columns like `r_500`, `t_700`, `u_850`, etc. Surface variables were merged separately, followed by an inner join with the TP precipitation data on [(valid_time, latitude, longitude)](file:///c:/Users/HYPER%20Computers/Downloads/a4.project.bilstm/app.py#53-59).
+
+### 3.2 Cloudburst Label Definition
+A sample is labelled as a **cloudburst (positive class = 1)** if precipitation exceeds the **95th percentile of the total precipitation distribution OR 20 mm/hr**, whichever is greater:
+
+```
+cloudburst_threshold = max(percentile_95(tp_mm), 20.0 mm/hr) = 20.00 mm/hr
+```
+
+This scientifically grounded threshold produced:
+- **Positive (cloudburst) events:** 764 out of 61,998 (only **1.23%**)
+- This severe **class imbalance** (82:1 ratio) is the central challenge of this problem.
+
+### 3.3 Cyclical Time Feature Engineering
+To help the model understand seasonality (monsoon season peaks in July–August), four cyclical features were derived from the timestamp using sine/cosine encoding — this avoids discontinuities at year/month boundaries:
+
+```python
+month_sin = sin(2π × month / 12)
+month_cos = cos(2π × month / 12)
+doy_sin   = sin(2π × day_of_year / 365)
+doy_cos   = cos(2π × day_of_year / 365)
+```
+
+### 3.4 Feature Scaling
+A **StandardScaler** (zero mean, unit variance) was applied to all 26 features. The scaler was **fit only on training data** and applied to validation/test data to prevent data leakage. The fitted scaler is saved as [scaler_final.pkl](file:///c:/Users/HYPER%20Computers/Downloads/a4.project.bilstm/scaler_final.pkl) for use during live inference.
+
+### 3.5 Sequence Construction (Sliding Window)
+For each geographic location, a **sliding window** of:
+- **Sequence length = 6** (6 past hourly observations)
+- **Forecast horizon = 2** (predict the cloudburst event 2 hours ahead)
+
+This means: given atmospheric conditions at hours t−5, t−4, t−3, t−2, t−1, t, the model predicts whether a cloudburst will occur at hour **t+2**. This 2-hour lead time is operationally useful for early warning.
+
+---
+
+## 4. Model Architecture — Bidirectional LSTM (BiLSTM)
+
+The core predictive model is a **Bidirectional Long Short-Term Memory (BiLSTM)** neural network, a specialised recurrent architecture designed for sequential data.
+
+### 4.1 Why BiLSTM?
+Standard LSTMs process sequences only in the forward direction. A **Bidirectional LSTM** processes the sequence in **both forward and backward** directions simultaneously, doubling the temporal context available at each timestep. For meteorological sequences, this means the model can capture both the trend leading up to the current moment and the overall pattern of the 6-hour window.
+
+LSTMs solve the **vanishing gradient problem** of vanilla RNNs through gating mechanisms:
+- **Forget gate**: decides what past information to discard
+- **Input gate**: decides what new information to store
+- **Output gate**: decides what to output at each timestep
+- **Cell state**: carries long-term memory across time steps
+
+### 4.2 Final Model Architecture (from training logs)
+
+```
+Input Layer:        (None, 6, 26)     ← 6 timesteps × 26 features
+Bidirectional LSTM: (None, 256)       ← 128 × 2 (forward + backward)  [158,720 params]
+Dense (ReLU):       (None, 48)        ← Hidden layer with L2 regularisation [12,336 params]
+Dropout:            (None, 48)        ← 50% dropout for regularisation
+Dense (Sigmoid):    (None, 1)         ← Output: cloudburst probability [49 params]
+─────────────────────────────────────────────────────────────────────
+Total Parameters:   171,105  (~668 KB)
+```
+
+> The final architecture — a single BiLSTM layer with 128 units (→ 256 after bidirectional expansion), a 48-unit dense layer, and 50% dropout — was found to be optimal through extensive hyperparameter search.
+
+### 4.3 Optimal Hyperparameters (Found by Search)
+
+| Hyperparameter | Value | Meaning |
+|---|---|---|
+| LSTM Units | 128 | Memory capacity per direction (×2 = 256 total) |
+| Dropout Rate | 0.50 | 50% of neurons randomly dropped during training |
+| Dense Units | 48 | Hidden layer neurons after LSTM |
+| Learning Rate | 0.005 | Adam optimizer step size |
+
+---
+
+## 5. Handling Class Imbalance
+
+With only 1.23% positive samples, a naive model would simply predict "no cloudburst" always and achieve 98.77% accuracy while being completely useless. Two strategies were used:
+
+### 5.1 Focal Loss (Custom Loss Function)
+Instead of standard binary cross-entropy, the model uses **Focal Loss**, specifically designed for severe class imbalance. It down-weights easy negative examples and focuses the model on hard-to-classify positive cases:
+
+```
+FL(pt) = -α · (1 - pt)^γ · log(pt)
+```
+
+Parameters used:
+- **γ (gamma) = 2.0** — focusing parameter; higher γ = more down-weighting of easy examples
+- **α (alpha) = 0.5** — balancing factor giving equal attention to positive class
+
+### 5.2 Balanced Class Weights
+During training, **sklearn's `compute_class_weight('balanced')`** was used to assign higher loss weight to the rare positive class:
+
+```
+weight_positive = total_samples / (2 × n_positives) ≈ 40.7
+weight_negative = total_samples / (2 × n_negatives) ≈ 0.505
+```
+
+The combination of Focal Loss and class weighting forces the model to pay much more attention to the rare but critical cloudburst events.
+
+---
+
+## 6. Training Strategy — Rolling Window Cross-Validation
+
+To avoid **data leakage** and simulate real-world deployment conditions, a **temporal rolling validation** strategy was used instead of random cross-validation:
+
+| Window | Train Years | Validation Years |
+|---|---|---|
+| 1 | *(none)* | 2014, 2015 |
+| 2 | 2014, 2015 | 2016, 2017 |
+| 3 | 2014–2017 | 2020 |
+| 4 | 2014–2020 | 2021 |
+| 5 | 2014–2021 | 2022 |
+
+**Note:** Years 2018–2019 appear to be missing from the dataset (possibly due to data availability). Year **2023 was held out entirely** as the unseen final test set.
+
+Each window ensures the model is always trained on past data and validated on future data — exactly how a real forecasting model would be used.
+
+### Optimization Metric: PR-AUC (Precision-Recall AUC)
+Because the dataset is highly imbalanced, **ROC-AUC alone is misleading** (even bad models can score high). **PR-AUC** (Area Under the Precision-Recall Curve) is a far more informative metric for imbalanced problems and was used as the primary optimization target.
+
+---
+
+## 7. Hyperparameter Tuning
+
+**30 trials of random search** were conducted, each evaluating a candidate hyperparameter set using rolling window cross-validation and computing the average validation PR-AUC across all windows. The search space was:
+
+| Parameter | Options |
+|---|---|
+| LSTM Units | 32, 64, 128 |
+| Dropout | 0.2, 0.3, 0.4, 0.5 |
+| Dense Units | 16, 32, 48, 64 |
+| Learning Rate | 1e-4, 5e-4, 1e-3, 5e-3, 1e-2 |
+
+**Best average validation PR-AUC across 30 trials: 0.4375** (Trial 14)
+
+The full search took approximately **3 hours** of compute time.
+
+---
+
+## 8. Model Performance (Final Test — Year 2023)
+
+The final model was retrained on all data from 2014–2022 and evaluated on the **held-out 2023 test set** (13,132 sequences, 98 positive events).
+
+| Metric | Value | Interpretation |
+|---|---|---|
+| **Accuracy** | **99.24%** | Overall correct predictions |
+| **Precision** | **49.18%** | When model says "cloudburst", it is correct ~49% of the time |
+| **Recall** | **61.22%** | Detects ~61% of all actual cloudburst events |
+| **F1 Score** | **54.55%** | Harmonic mean of Precision and Recall |
+| **ROC AUC** | **97.51%** | Excellent discrimination between cloudburst/non-cloudburst |
+| **PR AUC** | **36.21%** | Good for a severely imbalanced problem |
+| **Optimal Threshold** | **0.4845** | Threshold tuned to maximise F1 on test set |
+
+> [!IMPORTANT]  
+> **Understanding the metrics:** A 99.24% accuracy on a 1.23% positive rate dataset is expected even for decent models. The critical metrics are **ROC-AUC (0.9751)** — which shows the model can almost perfectly rank cloudburst vs. non-cloudburst conditions — and **Recall (61.22%)** — which means the system catches the majority of actual cloudburst events. The PR-AUC of 0.3621 is substantially above the baseline (random classifier would score ~0.0123).
+
+---
+
+## 9. 6-Hour Forecast Generation
+
+For each live prediction cycle, the system generates a **6-hour ahead forecast**. Since the BiLSTM was trained with a fixed 2-hour horizon, a simple linear adjustment factor is applied for forecasts beyond +2h:
+
+```
+prob_at_hour_h = base_prob × (1 + 0.04 × (h - 2))
+```
+
+Where `h` is the forecast hour (1 through 6) and `base_prob` is the model's raw output (the +2h prediction). This scales the forecast slightly upward for later hours, reflecting increasing uncertainty and typical monsoon storm development. All forecast probabilities are capped at 100%.
+
+---
+
+## 10. Risk Level Classification
+
+The system classifies predictions into three operational risk levels inspired by standard meteorological warning systems:
+
+| Risk Level | Probability Range | Color | Action |
+|---|---|---|---|
+| ✓ **Low Risk** | 0% – 35% | 🟢 Green | Normal conditions |
+| ⚠️ **Moderate Risk** | 36% – 60% | 🟡 Yellow | Stay alert, monitor conditions |
+| 🚨 **High Risk** | 61% – 100% | 🔴 Red | Multi-tone alarm + "Stay alert and avoid flood prone areas!" |
+
+---
+
+## 11. Live Web Dashboard System Architecture
+
+The deployment system is a full-stack web application built with:
+
+### 11.1 Backend — Python Flask ([app.py](file:///c:/Users/HYPER%20Computers/Downloads/a4.project.bilstm/app.py))
+- **Framework:** Flask (Python 3.x)
+- **Model Loading:** TensorFlow/Keras with custom focal_loss objects
+- **Scaler:** scikit-learn `StandardScaler` loaded from [scaler_final.pkl](file:///c:/Users/HYPER%20Computers/Downloads/a4.project.bilstm/scaler_final.pkl)
+- **Feature Columns:** 26 feature names loaded from [feature_cols.pkl](file:///c:/Users/HYPER%20Computers/Downloads/a4.project.bilstm/feature_cols.pkl)
+- **API Security:** API key authentication via `X-API-Key` HTTP header
+- **Rate Limiting:** 300 requests per 60-second window (in-memory)
+- **Timezone:** Asia/Karachi (UTC+5:00, Pakistan Standard Time)
+
+### 11.2 Key API Endpoints
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `GET /` | GET | Serve the dashboard HTML |
+| `POST /api/predict_live` | POST (authenticated) | Accept live ERA5-format weather features, run model, return probability + 6h forecast |
+| `POST /api/predict` | POST | Direct feature array prediction (raw 2D/3D input) |
+| `GET /api/health` | GET | Server health check |
+| `GET /api/prediction` | GET | Quick prediction using placeholder features |
+
+### 11.3 Frontend — HTML/CSS/JavaScript ([templates/index.html](file:///c:/Users/HYPER%20Computers/Downloads/a4.project.bilstm/templates/index.html))
+The dashboard is a single-page application (no framework) featuring:
+
+- **Live Prediction Loop:** A self-chaining `async/await` loop ([startLiveLoop](file:///c:/Users/HYPER%20Computers/Downloads/a4.project.bilstm/templates/index.html#1235-1246)) that runs predictions back-to-back, updating approximately **every 1 second**
+- **Weather Data:** Fetched from **Open-Meteo API** (free, no API key required) every 60 seconds and cached to avoid API rate limiting
+- **External Weather API:** WeatherAPI.com with API key (fallback to Open-Meteo)
+- **Map:** Interactive **Leaflet.js** map centered on Babusar Top with a colour-coded risk marker
+- **Alerts:** Browser notification API + audio beep (Web Audio API) for high-risk events
+- **Clock:** Live Pakistan Standard Time clock updating every second
+
+### 11.4 Live Feature Pipeline (How Real-Time Prediction Works)
+
+```
+Open-Meteo API (every 60s)
+        ↓
+fetchOpenMeteoFeatures()
+  - Fetches hourly: temperature, dewpoint, surface pressure,
+    cloud cover, CAPE, and pressure-level wind/humidity/temp
+  - Converts wind speed + direction → U/V components
+  - Converts temperatures °C → Kelvin (for consistency with ERA5 training data)
+  - Builds 10 rows of feature dictionaries (covering ±6 hours around current time)
+        ↓
+Cached in browser for 60 seconds
+        ↓
+POST /api/predict_live  (with X-API-Key header)
+  - Flask receives feature rows
+  - Maps to the 26 saved feature columns (in exact training order)
+  - Applies saved StandardScaler (same transform used in training)
+  - Reshapes to (1, 6, 26) → BiLSTM model → sigmoid output
+  - Generates 6-hour forecast array
+        ↓
+Dashboard updates: risk badge, probability %, forecast cards,
+weather variables, map marker colour
+```
+
+---
+
+## 12. Technologies and Libraries Used
+
+| Layer | Technology | Purpose |
+|---|---|---|
+| **Deep Learning** | TensorFlow 2.x / Keras | BiLSTM model training and inference |
+| **Data Processing** | NumPy, Pandas | Data manipulation, merging, sequencing |
+| **Class Imbalance** | imbalanced-learn (SMOTE), sklearn class_weight | Handling 82:1 imbalance |
+| **Hyperparameter Tuning** | Random Search (30 trials) | Optimal model configuration |
+| **Metrics** | scikit-learn | Precision, Recall, F1, ROC-AUC, PR-AUC |
+| **Scaler Persistence** | joblib | Save/load StandardScaler |
+| **Backend** | Flask, Flask-CORS | REST API server |
+| **ERA5 Data (offline)** | cdsapi, xarray | Historical data retrieval |
+| **Live Weather** | Open-Meteo API, WeatherAPI.com | Real-time atmospheric data |
+| **Frontend** | HTML5, CSS3, Vanilla JavaScript | Dashboard UI |
+| **Map** | Leaflet.js + OpenStreetMap | Interactive geographic display |
+| **Audio** | Web Audio API | Emergency beep alerts |
+| **Notifications** | Browser Notifications API | Desktop push alerts |
+
+---
+
+## 13. Limitations and Future Work
+
+1. **ERA5 Resolution (0.25°):** The model trained on ~28 km grid data, which may miss very localised convective triggers in the complex Kaghan Valley terrain. Higher-resolution data (e.g., WRF model output) could improve results.
+
+2. **Open-Meteo as Live Proxy:** The live system uses Open-Meteo as a proxy for ERA5-like features. While the variables are equivalent, there may be differences in how each model estimates them, introducing a distribution shift.
+
+3. **Recall of 61%:** The model still misses about 39% of actual cloudbursts. This is partly due to the extreme rarity of events (1.23%) and the limited spatial resolution of ERA5.
+
+4. **Missing Years (2018–2019):** The training data has a gap for 2018–2019, which may have affected the rolling validation windows.
+
+5. **Future Improvements:**
+   - Integrate WRF (Weather Research & Forecasting) model output for higher resolution
+   - Add attention mechanism over the 6-timestep sequence
+   - Expand to multiple surrounding grid points for spatial context
+   - Use SMOTE oversampling during training (currently using class weights)
+   - Explore Transformer-based architectures for longer temporal dependencies
+
+---
+
+## 14. Summary
+
+This project presents a complete end-to-end **deep learning-based early warning system** for cloud burst prediction at Babusar Top:
+
+- **Data:** 10 years (2014–2023) of hourly ERA5 atmospheric reanalysis + precipitation data; 61,998 hourly records; 26 meteorological features
+- **Model:** BiLSTM (171,105 parameters) trained with Focal Loss and balanced class weights on a 82:1 imbalanced dataset
+- **Training:** 30-trial random hyperparameter search evaluated via temporal rolling-window cross-validation (to prevent data leakage)
+- **Performance on 2023 test set:** Accuracy 99.24%, Recall 61.22%, ROC-AUC 97.51%, PR-AUC 36.21%
+- **Lead Time:** 2-hour ahead prediction with a 6-hour forecast extension
+- **Deployment:** Real-time Flask REST API server with live Open-Meteo integration, interactive Leaflet.js map, and three-tier colour-coded risk alert system
+- **Update Rate:** ~1 prediction per second, truly live dashboard
+
+This system demonstrates the feasibility of applying modern deep learning (BiLSTM) to a high-stakes, real-world early warning problem in a data-scarce, heavily imbalanced setting, achieving strong discriminative performance (ROC-AUC 0.9751) that can meaningfully support disaster risk reduction in the Kaghan Valley.

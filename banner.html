@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloudburst Prediction System - Project Banner</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f5f7fa;
+            padding: 20px;
+        }
+
+        .banner-hero {
+            background: linear-gradient(135deg, #0f2027 0%, #203a43 50%, #2c5364 100%);
+            color: white;
+            padding: 80px 40px;
+            text-align: center;
+            border-radius: 20px;
+            margin-bottom: 40px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .banner-hero::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 600"><defs><filter id="blur"><feGaussianBlur in="SourceGraphic" stdDeviation="40"/></filter></defs><circle cx="10%" cy="20%" r="300" fill="rgba(102, 126, 234, 0.1)" filter="url(%23blur)"/><circle cx="80%" cy="80%" r="400" fill="rgba(118, 75, 162, 0.1)" filter="url(%23blur)"/></svg>') no-repeat center;
+            background-size: cover;
+            opacity: 0.5;
+        }
+
+        .banner-content {
+            position: relative;
+            z-index: 2;
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+
+        .banner-icon {
+            font-size: 70px;
+            margin-bottom: 20px;
+            animation: float 3s ease-in-out infinite;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-20px); }
+        }
+
+        .banner-title {
+            font-size: 3.2rem;
+            font-weight: 900;
+            margin-bottom: 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .banner-subtitle {
+            font-size: 1.2rem;
+            color: #e0e0e0;
+            margin-bottom: 30px;
+            font-weight: 300;
+        }
+
+        /* Key Facts Section */
+        .key-facts {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 25px;
+            margin-top: 50px;
+            padding-top: 40px;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .fact {
+            background: rgba(255, 255, 255, 0.08);
+            padding: 25px;
+            border-radius: 12px;
+            border: 1px solid rgba(102, 126, 234, 0.3);
+        }
+
+        .fact-number {
+            font-size: 2.2rem;
+            font-weight: 900;
+            color: #667eea;
+            margin-bottom: 8px;
+        }
+
+        .fact-label {
+            font-size: 0.85rem;
+            color: #b0b0b0;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        /* Main Content */
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+
+        .section {
+            background: white;
+            padding: 50px;
+            margin-bottom: 40px;
+            border-radius: 16px;
+            box-shadow: 0 5px 25px rgba(0, 0, 0, 0.08);
+        }
+
+        h2 {
+            font-size: 2rem;
+            color: #1e3c72;
+            margin-bottom: 25px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .two-column {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-bottom: 20px;
+        }
+
+        .column h3 {
+            color: #667eea;
+            font-size: 1.2rem;
+            margin-bottom: 15px;
+            font-weight: 700;
+        }
+
+        .stat-box {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 15px;
+            border-left: 4px solid #667eea;
+        }
+
+        .stat-box strong {
+            color: #1e3c72;
+            display: block;
+            margin-bottom: 5px;
+        }
+
+        .stat-box span {
+            color: #666;
+            font-size: 0.9rem;
+        }
+
+        .highlight {
+            background: linear-gradient(120deg, #667eea15 0%, #764ba215 100%);
+            padding: 20px;
+            border-radius: 12px;
+            border-left: 4px solid #667eea;
+            margin: 20px 0;
+        }
+
+        .highlight strong {
+            color: #667eea;
+        }
+
+        ul, ol {
+            margin-left: 20px;
+            color: #333;
+            line-height: 1.8;
+        }
+
+        li {
+            margin-bottom: 10px;
+        }
+
+        .badge-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .badge {
+            background: #f0f3ff;
+            color: #667eea;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            background: white;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        th {
+            background: #f8f9fa;
+            padding: 12px;
+            text-align: left;
+            font-weight: 700;
+            color: #1e3c72;
+            border-bottom: 2px solid #e9ecef;
+        }
+
+        td {
+            padding: 12px;
+            border-bottom: 1px solid #e9ecef;
+            color: #666;
+        }
+
+        tr:hover {
+            background: #f8f9fa;
+        }
+
+        .footer-note {
+            text-align: center;
+            color: #999;
+            font-size: 0.9rem;
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid #e9ecef;
+        }
+
+        @media (max-width: 768px) {
+            .banner-hero {
+                padding: 40px 20px;
+            }
+
+            .banner-title {
+                font-size: 2rem;
+            }
+
+            .two-column {
+                grid-template-columns: 1fr;
+            }
+
+            .section {
+                padding: 25px;
+            }
+
+            h2 {
+                font-size: 1.5rem;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <!-- HERO BANNER -->
+    <div class="banner-hero">
+        <div class="banner-content">
+            <div class="banner-icon">⚡</div>
+            <h1 class="banner-title">Cloudburst Early Warning System</h1>
+            <p class="banner-subtitle">Deep Learning Model for Real-Time Prediction at Babusar Top, Kaghan Valley</p>
+
+            <!-- Key Facts -->
+            <div class="key-facts">
+                <div class="fact">
+                    <div class="fact-number">2 hrs</div>
+                    <div class="fact-label">Lead Time</div>
+                </div>
+                <div class="fact">
+                    <div class="fact-number">10 yrs</div>
+                    <div class="fact-label">Training Data</div>
+                </div>
+                <div class="fact">
+                    <div class="fact-number">256</div>
+                    <div class="fact-label">LSTM Units</div>
+                </div>
+                <div class="fact">
+                    <div class="fact-number">26</div>
+                    <div class="fact-label">Features</div>
+                </div>
+                <div class="fact">
+                    <div class="fact-number">61.9K</div>
+                    <div class="fact-label">Sequences</div>
+                </div>
+                <div class="fact">
+                    <div class="fact-number">0.44</div>
+                    <div class="fact-label">PR-AUC Score</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- PROJECT OVERVIEW -->
+        <div class="section">
+            <h2>📋 Project Overview</h2>
+            
+            <p><strong>Objective:</strong> Develop a deep learning model to predict extreme rainfall events (cloudbursts) 2 hours in advance for Babusar Top, Kaghan Valley, Pakistan.</p>
+
+            <div class="highlight">
+                <strong>Why This Matters:</strong> Cloudbursts cause flash floods, landslides, and infrastructure damage. Traditional weather models fail in complex mountain terrain. This project fills that critical gap with AI-driven localized prediction.
+            </div>
+
+            <div class="two-column">
+                <div>
+                    <h3>📍 Location Details</h3>
+                    <div class="stat-box">
+                        <strong>Coordinates</strong>
+                        <span>35.6°N, 73.6°E</span>
+                    </div>
+                    <div class="stat-box">
+                        <strong>Region</strong>
+                        <span>Kaghan Valley, Khyber Pakhtunkhwa, Pakistan</span>
+                    </div>
+                    <div class="stat-box">
+                        <strong>Altitude</strong>
+                        <span>~4,173 meters above sea level</span>
+                    </div>
+                    <div class="stat-box">
+                        <strong>Terrain</strong>
+                        <span>Complex mountain geography with steep slopes</span>
+                    </div>
+                </div>
+
+                <div>
+                    <h3>🎯 Key Metrics</h3>
+                    <div class="stat-box">
+                        <strong>Cloudburst Definition</strong>
+                        <span>≥20 mm/hr or 95th percentile rainfall (whichever is greater)</span>
+                    </div>
+                    <div class="stat-box">
+                        <strong>Prediction Window</strong>
+                        <span>2-hour advance lead time for actionable warning</span>
+                    </div>
+                    <div class="stat-box">
+                        <strong>Class Imbalance</strong>
+                        <span>Only 1.23% cloudburst events (764 out of 61,998)</span>
+                    </div>
+                    <div class="stat-box">
+                        <strong>Data Coverage</strong>
+                        <span>2014–2023 (10 years) with 2018-2019 gaps</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- DATASET & PREPROCESSING -->
+        <div class="section">
+            <h2>📊 Dataset & Preprocessing</h2>
+
+            <div class="two-column">
+                <div>
+                    <h3>Data Sources</h3>
+                    <div class="stat-box">
+                        <strong>ERA5 Reanalysis (ECMWF)</strong>
+                        <span>Hourly atmospheric variables (2014–2023)</span>
+                    </div>
+                    <div class="stat-box">
+                        <strong>Precipitation Data</strong>
+                        <span>Total precipitation converted to mm/hr</span>
+                    </div>
+                    <div class="stat-box">
+                        <strong>Spatial Resolution</strong>
+                        <span>0.25° × 0.25° (~28 km grid)</span>
+                    </div>
+                    <div class="stat-box">
+                        <strong>Temporal Resolution</strong>
+                        <span>Hourly records</span>
+                    </div>
+                </div>
+
+                <div>
+                    <h3>Feature Engineering</h3>
+                    <div class="stat-box">
+                        <strong>Pressure-Level Variables</strong>
+                        <span>15 variables at 500, 700, 850 hPa (R, T, U, V, VV)</span>
+                    </div>
+                    <div class="stat-box">
+                        <strong>Surface Variables</strong>
+                        <span>11 variables (T2m, D2m, SP, TCC, CAPE, TCWV, etc.)</span>
+                    </div>
+                    <div class="stat-box">
+                        <strong>Cyclical Encoding</strong>
+                        <span>4 time features (month/day sine-cosine pairs)</span>
+                    </div>
+                    <div class="stat-box">
+                        <strong>Scaling Method</strong>
+                        <span>StandardScaler (zero mean, unit variance)</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="highlight">
+                <strong>Dataset Size:</strong> 61,984 sequences of 6 hourly timesteps × 26 features = 9.7M data points
+            </div>
+
+            <h3 style="margin-top: 25px; color: #1e3c72;">Sequence Construction</h3>
+            <table>
+                <tr>
+                    <th>Component</th>
+                    <th>Value</th>
+                    <th>Meaning</th>
+                </tr>
+                <tr>
+                    <td>Input Sequence Length</td>
+                    <td>6 timesteps</td>
+                    <td>Past 6 hours of atmospheric data</td>
+                </tr>
+                <tr>
+                    <td>Forecast Horizon</td>
+                    <td>+2 hours ahead</td>
+                    <td>Predict cloudburst 2 hours in the future</td>
+                </tr>
+                <tr>
+                    <td>Sliding Window</td>
+                    <td>1-hour stride</td>
+                    <td>Creates overlapping sequences for training</td>
+                </tr>
+                <tr>
+                    <td>Train/Val/Test Split</td>
+                    <td>Rolling Window CV</td>
+                    <td>Temporal validation to avoid data leakage</td>
+                </tr>
+            </table>
+        </div>
+
+        <!-- MODEL ARCHITECTURE -->
+        <div class="section">
+            <h2>🧠 Model Architecture</h2>
+
+            <h3 style="color: #667eea; margin-bottom: 15px;">Why BiLSTM?</h3>
+            <p>Bidirectional LSTMs process sequences in both forward and backward directions, capturing temporal patterns that unidirectional models miss. For atmospheric sequences, this means detecting both leading indicators and overall patterns in a 6-hour window.</p>
+
+            <div class="highlight">
+                <strong>Final Architecture (171,105 parameters):</strong>
+                <ul style="margin-top: 10px;">
+                    <li><strong>Input:</strong> (6 timesteps × 26 features)</li>
+                    <li><strong>BiLSTM Layer:</strong> 128 units × 2 directions = 256 total [158,720 params]</li>
+                    <li><strong>Dense Layer:</strong> 48 units + ReLU activation + L2 regularization [12,336 params]</li>
+                    <li><strong>Dropout:</strong> 50% during training</li>
+                    <li><strong>Output:</strong> Sigmoid activation → cloudburst probability (0-1) [49 params]</li>
+                </ul>
+            </div>
+
+            <h3 style="color: #667eea; margin: 25px 0 15px;">Handling Extreme Class Imbalance (1.23% events)</h3>
+            <div class="two-column">
+                <div>
+                    <strong>Focal Loss</strong>
+                    <div class="stat-box" style="margin-top: 10px;">
+                        <span>Down-weights easy negatives, focuses on hard positives</span>
+                    </div>
+                    <div class="stat-box">
+                        <strong>Gamma (γ)</strong> = 2.0
+                    </div>
+                    <div class="stat-box">
+                        <strong>Alpha (α)</strong> = 0.5
+                    </div>
+                </div>
+                <div>
+                    <strong>Balanced Class Weights</strong>
+                    <div class="stat-box" style="margin-top: 10px;">
+                        <span>Sklearn's compute_class_weight('balanced')</span>
+                    </div>
+                    <div class="stat-box">
+                        <strong>Weight (Positive)</strong> ≈ 40.7
+                    </div>
+                    <div class="stat-box">
+                        <strong>Weight (Negative)</strong> ≈ 0.505
+                    </div>
+                </div>
+            </div>
+
+            <div class="highlight">
+                <strong>Result:</strong> Model pays 80× more attention to rare cloudburst events, preventing it from collapsing into a "always predict no cloudburst" trivial solution.
+            </div>
+        </div>
+
+        <!-- TRAINING STRATEGY -->
+        <div class="section">
+            <h2>🎓 Training Strategy</h2>
+
+            <h3 style="color: #667eea; margin-bottom: 15px;">Rolling Window Cross-Validation</h3>
+            <p>Instead of random splits (which leak future information into training), we use temporal rolling validation to simulate real-world deployment:</p>
+
+            <table>
+                <tr>
+                    <th>Window</th>
+                    <th>Train Years</th>
+                    <th>Validation Years</th>
+                    <th>Test Set</th>
+                </tr>
+                <tr>
+                    <td>1</td>
+                    <td>—</td>
+                    <td>2014, 2015</td>
+                    <td>Baseline only</td>
+                </tr>
+                <tr>
+                    <td>2</td>
+                    <td>2014–2015</td>
+                    <td>2016–2017</td>
+                    <td>—</td>
+                </tr>
+                <tr>
+                    <td>3</td>
+                    <td>2014–2017</td>
+                    <td>2020</td>
+                    <td>—</td>
+                </tr>
+                <tr>
+                    <td>4</td>
+                    <td>2014–2020</td>
+                    <td>2021</td>
+                    <td>—</td>
+                </tr>
+                <tr>
+                    <td>5</td>
+                    <td>2014–2021</td>
+                    <td>2022</td>
+                    <td>—</td>
+                </tr>
+                <tr>
+                    <td colspan="4" style="text-align: center; font-weight: bold;">Final Test Set: 2023 (unseen, held out)</td>
+                </tr>
+            </table>
+
+            <div class="highlight" style="margin-top: 20px;">
+                <strong>Note:</strong> Years 2018–2019 missing from dataset (data availability issue)
+            </div>
+
+            <h3 style="color: #667eea; margin: 25px 0 15px;">Hyperparameter Tuning</h3>
+            <p><strong>Method:</strong> 30 trials of random search with rolling window cross-validation</p>
+            
+            <table>
+                <tr>
+                    <th>Hyperparameter</th>
+                    <th>Search Space</th>
+                    <th>Best Value</th>
+                </tr>
+                <tr>
+                    <td>LSTM Units</td>
+                    <td>32, 64, 128</td>
+                    <td>128</td>
+                </tr>
+                <tr>
+                    <td>Dropout Rate</td>
+                    <td>0.2, 0.3, 0.4, 0.5</td>
+                    <td>0.50</td>
+                </tr>
+                <tr>
+                    <td>Dense Units</td>
+                    <td>16, 32, 48, 64</td>
+                    <td>48</td>
+                </tr>
+                <tr>
+                    <td>Learning Rate</td>
+                    <td>1e-4 to 1e-2</td>
+                    <td>0.005</td>
+                </tr>
+                <tr>
+                    <td>Optimizer</td>
+                    <td>Adam</td>
+                    <td>Adam</td>
+                </tr>
+            </table>
+
+            <div class="highlight" style="margin-top: 20px;">
+                <strong>Best Result (Trial 14):</strong> Average validation PR-AUC = <strong>0.4375</strong> across all rolling windows
+            </div>
+
+            <p style="margin-top: 15px; color: #666; font-size: 0.9rem;">
+                ⏱️ <strong>Compute Time:</strong> ~3 hours for 30 trials on standard GPU. Metric: PR-AUC optimized for imbalanced classification (ROC-AUC is misleading for rare events).
+            </p>
+        </div>
+
+        <!-- PERFORMANCE & DEPLOYMENT -->
+        <div class="section">
+            <h2>📈 Performance & Deployment</h2>
+
+            <div class="two-column">
+                <div>
+                    <h3>Metrics</h3>
+                    <div class="stat-box">
+                        <strong>Validation PR-AUC</strong>
+                        <span>0.44 (best across rolling windows)</span>
+                    </div>
+                    <div class="stat-box">
+                        <strong>Model Size</strong>
+                        <span>171,105 parameters (~668 KB)</span>
+                    </div>
+                    <div class="stat-box">
+                        <strong>Inference Time</strong>
+                        <span>~50-100 ms per prediction</span>
+                    </div>
+                    <div class="stat-box">
+                        <strong>Format</strong>
+                        <span>TensorFlow/Keras (.keras)</span>
+                    </div>
+                </div>
+
+                <div>
+                    <h3>Deployment Stack</h3>
+                    <div class="stat-box">
+                        <strong>Backend</strong>
+                        <span>Python Flask REST API</span>
+                    </div>
+                    <div class="stat-box">
+                        <strong>Frontend</strong>
+                        <span>HTML/CSS/JavaScript Dashboard</span>
+                    </div>
+                    <div class="stat-box">
+                        <strong>Live Data</strong>
+                        <span>Open-Meteo & WeatherAPI integration</span>
+                    </div>
+                    <div class="stat-box">
+                        <strong>Features</strong>
+                        <span>6-hour forecast, weather variables, risk alerts</span>
+                    </div>
+                </div>
+            </div>
+
+            <h3 style="color: #667eea; margin: 25px 0 15px;">Technology Stack</h3>
+            <div class="badge-group">
+                <span class="badge">🐍 Python 3.9+</span>
+                <span class="badge">🧠 TensorFlow/Keras</span>
+                <span class="badge">📊 NumPy/Pandas</span>
+                <span class="badge">⚙️ Scikit-learn</span>
+                <span class="badge">📡 Flask</span>
+                <span class="badge">☁️ ERA5 Data</span>
+                <span class="badge">📍 Open-Meteo API</span>
+                <span class="badge">🗺️ Leaflet Maps</span>
+            </div>
+        </div>
+
+        <!-- KEY INNOVATIONS -->
+        <div class="section">
+            <h2>✨ Key Innovations</h2>
+            
+            <ul style="font-size: 1rem;">
+                <li><strong>Temporal Validation:</strong> Rolling window CV prevents data leakage and simulates real forecasting deployment</li>
+                <li><strong>Focal Loss:</strong> Handles extreme class imbalance (1.23% events) without collapsing to trivial predictions</li>
+                <li><strong>Cyclical Time Features:</strong> Sine/cosine encoding captures monsoon seasonality without discontinuities</li>
+                <li><strong>BiLSTM Architecture:</strong> Bidirectional processing captures both leading indicators and overall patterns</li>
+                <li><strong>Mountain-Specific:</strong> Designed for Babusar Top's complex terrain where traditional NWP models fail</li>
+                <li><strong>2-Hour Lead Time:</strong> Operationally useful for community evacuation and early warnings</li>
+                <li><strong>Production-Ready:</strong> Containerized API with authentication, rate limiting, and live data integration</li>
+            </ul>
+        </div>
+
+        <div class="footer-note">
+            <p>This banner is for project showcase and presentation purposes.</p>
+            <p>For technical thesis details, refer to <strong>project_explanation.md</strong> | For deployment info, see <strong>README.md</strong></p>
+        </div>
+    </div>
+</body>
+
+</html>

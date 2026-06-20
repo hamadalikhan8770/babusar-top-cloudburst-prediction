@@ -8,3 +8,12 @@ api_key.txt
 .DS_Store
 Thumbs.db
 
+# Keep raw datasets and spreadsheet data out of GitHub
+*.csv
+*.tsv
+*.xls
+*.xlsx
+*.nc
+data/
+dataset/
+datasets/
